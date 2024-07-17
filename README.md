@@ -1,5 +1,7 @@
 # NEATPaca: An Evolutionary Approach to Learning How to Trade
-![ay_lmao](https://i.postimg.cc/RhqTkFSh/NEATPaca.webp)
+<p align="center">
+  <img src="https://i.postimg.cc/RhqTkFSh/NEATPaca.webp" alt="ay_lmao">
+</p>
 ## Introduction
 In this project, I use the NEAT (Neuro Evolution of Augmenting Topologies) algorithm within a Python-based trading platform to develop an approach to algorithmic trading. The core of the project revolves around an autonomous trading agent capable of buying and selling positions across various currencies, with each action recorded and analyzed to enhance future decision-making. Leveraging the comprehensive data provided by the Alpaca API, the agent utilizes an array of technical indicators across multiple timeframes and window sizes, each normalized to facilitate AI interpretation. This enables the agent to not only execute trades based on sophisticated pattern recognition but also evolve its strategies over time through the NEAT algorithm's evolutionary processes.
 
