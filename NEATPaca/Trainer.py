@@ -12,7 +12,7 @@ import time
 
 
 class Trainer():
-    def __init__(self, TICKER, config, TFRAMES, from_year, from_month, from_day, until_year, until_month, until_day, config_path='neat_config.txt', checkpoint_load=''):
+    def __init__(self, TICKER, config, config_path='neat_config.txt', checkpoint_load=''):
         self.logger = Logger(folder_path="train_logs", 
                         file_name="train_log",
                         level="DEBUG",

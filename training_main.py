@@ -8,7 +8,7 @@ def train_agent(ticker, config):
     # Initialise DataHandler
     handler = DataHandler(TICKER=ticker, 
                           config=config)
-    handler.get_data()
+    handler.get_data(config=config)
 
     # Initialise Trainer
     trainer = Trainer(TICKER=ticker, 
