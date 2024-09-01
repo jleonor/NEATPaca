@@ -1,5 +1,6 @@
 import numpy as np
 import neat
+import cupy as cp
 
 
 class TradingAgent:
@@ -46,26 +47,36 @@ class TradingAgent:
     def make_decision(self, input_data, current_price):
         """Process the input data through the neural network to make a decision.
         Now includes position status as an additional input feature and potential percentage gain."""
+        
+        # Ensure input_data is a CuPy array
+        input_data = cp.asarray(input_data)
+        
         # Calculate potential percentage gain if position is open
         if self.position_open:
-            sell_value = self.investment * (
-            current_price / self.entry_price)  # Calculate sell value based on current price and investment
+            sell_value = self.investment * (current_price / self.entry_price)  # Calculate sell value based on current price and investment
             transaction_fee = sell_value * self.transaction_fee_percent  # Transaction fee for selling
             sell_value -= transaction_fee  # Deduct transaction fee from sell value
             profit = sell_value - self.investment  # Calculate profit from the sell
             potential_gain = (profit / self.investment)  # Calculate percentage gain from the trade
         else:
             potential_gain = 0
-
+        
         # Binary feature for position status (1 for open, 0 for not open)
         position_status = 1 if self.position_open else 0
-        self.last_action_period = self.last_action_period + 1
+        self.last_action_period += 1
         last_action_period = self.last_action_period / 1000
-
+        
         # Add the position status and potential gain as features
-        extended_input = np.append(input_data, [potential_gain, position_status, last_action_period])
-        output = self.net.activate(extended_input)
-        return np.argmax(output)  # Adjusted for 2 outputs: 0 for hold, 1 for action (buy/sell based on position)
+        extended_input = cp.append(input_data, [potential_gain, position_status, last_action_period])
+        output = self.net.activate(extended_input)  # Ensure that 'activate' function can handle CuPy arrays
+        
+        if isinstance(output, list):
+            # Ensure all elements in the list are CuPy arrays
+            output = cp.array(output)
+        # print(output)
+        # for i in output:
+        #     print(i)
+        return cp.argmax(output)
 
     def execute_trade(self, decision, price, date_time):
         """Execute a trade based on the decision and updates the agent's balance and position status, including the

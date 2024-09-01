@@ -1,23 +1,41 @@
 import sys
-from DataHandler import DataHandler
-from Trainer import Trainer
+from NEATPaca.DataHandler import DataHandler
+from NEATPaca.Trainer import Trainer
+from NEATPaca.ConfigReader import *
+from multiprocessing import Process
 
-def train_agent(ticker, from_year, from_month, from_day, timeframes):
+def train_agent(ticker, config):
     # Initialise DataHandler
-    handler = DataHandler(TICKER=ticker, TFRAMES=timeframes, from_year=from_year, from_month=from_month, from_day=from_day)
+    handler = DataHandler(TICKER=ticker, 
+                          config=config)
     handler.get_data()
 
     # Initialise Trainer
-    trainer = Trainer(TICKER=ticker, TFRAMES=timeframes, from_year=from_year, from_month=from_month, from_day=from_day)
+    trainer = Trainer(TICKER=ticker, 
+                      config=config)
     trainer.run()
 
+
+def start_training_process(ticker, config):
+    p = Process(target=train_agent, args=(ticker, config))
+    p.start()
+    return p
+
+
 if __name__ == "__main__":
-    ticker = sys.argv[1]
-    from_day = int(sys.argv[2])
-    from_month = int(sys.argv[3])
-    from_year = int(sys.argv[4])
-    timeframes = sys.argv[5].split(',')
+    config = ConfigReader('config.config')
+    processes = []
 
-    print((ticker, from_year, from_month, from_day, timeframes))
-
-    train_agent(ticker, from_year, from_month, from_day, timeframes)
+    if not config.threading:
+        for ticker in config.tickers:
+            train_agent(ticker, config)
+    
+    if config.threading:
+        # Run each ticker training in a separate process
+        for ticker in config.tickers:
+            p = start_training_process(ticker, config)
+            processes.append(p)
+        
+        # Wait for all processes to complete
+        for p in processes:
+            p.join()

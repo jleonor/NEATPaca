@@ -6,31 +6,35 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.requests import ClosePositionRequest
 from alpaca.data.historical import CryptoHistoricalDataClient
 from alpaca.data.historical import crypto
-from obj.NEATTradingAgent import TradingAgent
+from NEATPaca.NEATAgent import *
+from NEATPaca.DataHandler import *
+from NEATPaca.Logger import *
+from NEATPaca.ConfigReader import *
 import datetime as dt
 import pandas as pd
 import numpy as np
 import talib as ta
 import pickle
 import time
-from DataHandler import *
-from Logger import *
+
 import shutup; shutup.please()
 
 class NEATPacaTrader():
-    def __init__(self, TICKERS, AGENT_GENERATIONS, TFRAMES, API_KEY, API_SECRET):
+    def __init__(self, config):
         
         self.logger = Logger(folder_path="trade_logs", 
                         file_name="trade_log",
-                        level="DEBUG")
+                        level="DEBUG",
+                        rotation="daily",
+                        archive_freq="daily")
 
-        self.logger.log('Initializing DM variables', level="DEBUG")
+        self.logger.log('Initializing NEATPaca variables', level="DEBUG")
 
         self.log_messages = []
         self.decisions = []
-        self.TICKERS = TICKERS
+        self.TICKERS = config.tickers #TICKERS
         
-        self.AGENT_GENERATIONS = AGENT_GENERATIONS
+        self.AGENT_GENERATIONS = config.agent_generations #AGENT_GENERATIONS
         
         self.data_handlers = {}
         self.agents = {}
@@ -39,11 +43,11 @@ class NEATPacaTrader():
         self.eval_rows = {}
         
         # Initialize the client for crypto historical data
-        self.TFRAMES = TFRAMES
+        self.TFRAMES = config.timeframes
 
         # Set your API key and secret
-        self.API_KEY = API_KEY
-        self.API_SECRET = API_SECRET
+        self.API_KEY = config.api_key
+        self.API_SECRET = config.api_secret
 
         self.logger.log('Connecting to Alpaca', level="DEBUG")
 
@@ -61,15 +65,15 @@ class NEATPacaTrader():
             os.makedirs("trading_checkpoints")
 
         for ticker in self.TICKERS:
-            self.logger.log(f'Loading NEAT agent for {ticker}')
+            self.logger.log(f'Loading NEAT agent for {ticker}', level="DEBUG")
             checkpoint_path = f"./trading_checkpoints/{ticker.replace('/USD', '')}_checkpoint.pkl"
             if os.path.exists(checkpoint_path):
                 agent = self.load_checkpoint(checkpoint_path)
-                self.show_agent_state(agent)
+                self.show_agent_state(agent, ticker)
             else:
                 agent = self.load_winner_agent(f"./models/{ticker.replace('/USD', '')}_winner_genome_gen_{self.AGENT_GENERATIONS[ticker]}.pkl")
                 self.init_agent(agent)
-                self.show_agent_state(agent)
+                self.show_agent_state(agent, ticker)
 
             self.logger.log(f"Downloading {ticker} data from: {self.from_year}-{self.from_month:02d}-{self.from_day:02d} until now ({self.required_days} days of data for a {self.max_timeframe_minutes}min timeframe)")
             handler = DataHandler(TICKER=ticker, 
@@ -203,22 +207,10 @@ class NEATPacaTrader():
         decision = agent.make_decision(row_ta.to_numpy(), current_price)
         return decision
 
-    def show_agent_state(self, agent):
-        print("\n*** AGENT STATUS ***")
-        print(f"Starting money: {agent.starting_money}")
-        print(f"Current money: {agent.money}")
-        print(f"Transaction fee percentage: {agent.transaction_fee_percent}")
-        print(f"Position open: {agent.position_open}")
-        print(f"Entry price: {agent.entry_price}")
-        print(f"Trade log: {agent.trade_log}")
-        print(f"Daily balances: {agent.daily_balances}")
-        print(f"Wins: {agent.wins}")
-        print(f"Losses: {agent.losses}")
-        print(f"Equity peak: {agent.equity_peak}")
-        print(f"Max drawdown: {agent.max_drawdown}")
-        print(f"Portfolio: {agent.portfolio}")
-        print(f"Last action period: {agent.last_action_period}")
-        print()
+    def show_agent_state(self, agent, ticker):
+        agent_header = f"{ticker} agent"
+        self.logger.log(f"{agent_header} --- Available: ${round(agent.money, 2)} | Portfolio: ${round(agent.portfolio, 2)} | Position open: {agent.position_open} | Wins/Losses: {agent.wins}/{agent.losses}",
+                        level="INFO")
 
     def init_agent(self, agent):
         agent.money = agent.starting_money
@@ -312,16 +304,9 @@ class NEATPacaTrader():
 
 
 if __name__ == "__main__":
-    dm = NEATPacaTrader(TICKERS=["BTC/USD", "ETH/USD", "LTC/USD", "DOGE/USD", "AVAX/USD"],
-                      AGENT_GENERATIONS={"BTC/USD": 560,
-                                         "ETH/USD": 400,
-                                         "LTC/USD": 190,
-                                         "DOGE/USD": 420,
-                                         "AVAX/USD": 400}, 
-                      TFRAMES=['30Min'],
-                      API_KEY='PK50JGQU0JLZIJE9OM7A', 
-                      API_SECRET='F8QdVDCLEjsIoXwhgsTQQW5kIQTogiZA8rDGfu4N')
+    config = ConfigReader('config.config')
+    npt = NEATPacaTrader(config=config)
     
-    dm.trade()
+    npt.trade()
 
 

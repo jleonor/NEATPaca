@@ -1,32 +1,47 @@
 import pandas as pd
 import neat
-from obj.NEATTradingAgent import TradingAgent
+from NEATPaca.NEATAgent import *
+from NEATPaca.Logger import *
+from NEATPaca.ConfigReader import *
 import pickle
 import os
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import time
 
 
 class Trainer():
-    def __init__(self, TICKER, TFRAMES, from_year, from_month, from_day, config_path='neat_config.txt', checkpoint_load=''):
+    def __init__(self, TICKER, config, TFRAMES, from_year, from_month, from_day, until_year, until_month, until_day, config_path='neat_config.txt', checkpoint_load=''):
+        self.logger = Logger(folder_path="train_logs", 
+                        file_name="train_log",
+                        level="DEBUG",
+                        rotation="daily",
+                        archive_freq="daily")
+        
         self.ticker = TICKER
-        self.TFRAMES = TFRAMES
-        self.from_year = from_year
-        self.from_month = from_month
-        self.from_day = from_day
+        self.TFRAMES = config.timeframes
+        self.from_year = config.from_year
+        self.from_month = config.from_month
+        self.from_day = config.from_day
+
+        today = datetime.today()
+        self.until_year = config.until_year if config.until_year is not None else today.year
+        self.until_month = config.until_month if config.until_month is not None else today.month
+        self.until_day = config.until_day if config.until_day is not None else today.day
+
+
         self.config_path = config_path
 
-        self.STARTING_MONEY = 1000
-        self.TRANSACTION_FEE_PERCENT = 0.01
-
         self.checkpoint_load = checkpoint_load
-        self.starting_money = 1000
-        self.transaction_fee_percent = 0.01
+        self.starting_money = config.starting_money
+        self.transaction_fee_percent = config.transaction_fee
         self.name = self.create_filename()
         self.model_folder_name = "./models"
         self.viz_folder_name = "./viz_outputs"
+        self.checkpoint_folder_name = "./training_checkpoints"
 
+        self.create_folders()
         self.config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                                   neat.DefaultSpeciesSet, neat.DefaultStagnation,
                                   self.config_path)
@@ -34,17 +49,39 @@ class Trainer():
         self.load_data()
 
     def create_folders(self):
-        """Creates a folder if it does not exist."""
-        if not os.path.exists(self.model_folder_name):
-            os.makedirs(self.model_folder_name)
+        """Creates necessary folders if they do not exist."""
+        os.makedirs(self.model_folder_name, exist_ok=True)
+        os.makedirs(self.viz_folder_name, exist_ok=True)
+        os.makedirs(self.checkpoint_folder_name, exist_ok=True)
 
-        if not os.path.exists(self.viz_folder_name):
-            os.makedirs(self.viz_folder_name)
+    def load_population(self):
+        """Load the population from a checkpoint if available, or start a new population."""
+        checkpoint_path = self.find_latest_checkpoint()
+        if checkpoint_path:
+            self.population = neat.Checkpointer.restore_checkpoint(checkpoint_path)
+        else:
+            self.population = neat.Population(self.config)
+        self.add_reporters()
+
+    def add_reporters(self):
+        """Add NEAT reporters for output and saving checkpoints."""
+        self.population.add_reporter(neat.StdOutReporter(True))
+        self.population.add_reporter(neat.StatisticsReporter())
+        self.population.add_reporter(neat.Checkpointer(generation_interval=1, filename_prefix=f'{self.checkpoint_folder_name}/checkpoint_'))
+        self.population.add_reporter(CustomEvaluationReporter(self))
+
+    def find_latest_checkpoint(self):
+        """Find the most recent checkpoint file in the checkpoint directory."""
+        checkpoints = [os.path.join(self.checkpoint_folder_name, f) for f in os.listdir(self.checkpoint_folder_name) if f.startswith("checkpoint_")]
+        if checkpoints:
+            return max(checkpoints, key=os.path.getctime)
+        return None
 
     def create_filename(self):
         ticker_sanitized = self.ticker.replace("/", "-")
         tframes_joined = '-'.join(self.TFRAMES)
-        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}"
+        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}__{self.until_year}_{self.until_month}_{self.until_year}"
+
         return self.name
 
     def update_config(self, expected_inputs):
@@ -70,7 +107,8 @@ class Trainer():
     def load_data(self):
         file_path = f'price_data/{self.name}.csv'
         df = pd.read_csv(file_path)
-        df.fillna(method='ffill', inplace=True)
+        df.ffill(inplace=True)
+        # df.fillna(method='ffill', inplace=True)
 
         cols_to_remove = ['Date_Time', 'Open', 'High', 'Low', 'Close', 'Volume']
         cols = df.columns.tolist()
@@ -303,6 +341,11 @@ class CustomEvaluationReporter(neat.reporting.BaseReporter):
         self.trainer = trainer  # Store a reference to the Trainer instance
         self.generation = 0  # Initialize a generation counter
 
+    def start_generation(self, generation):
+        self.generation = generation
+        self.trainer.logger.log(f"Running generation {generation} for {self.trainer.ticker}", level="INFO")
+        self.generation_start_time = time.time()
+
     def end_generation(self, config, population, species_set):
         evaluated_genomes = [g for g in population.values() if g.fitness is not None]
         if evaluated_genomes:
@@ -323,11 +366,13 @@ class CustomEvaluationReporter(neat.reporting.BaseReporter):
                 win_loss_ratio, consistency_bonus, sum_percentage_gains = self.trainer.calculate_metrics(train_winner_agent)
                 train_metrics = [round(win_loss_ratio - 1, 4), round(consistency_bonus/2000, 4), round(sum_percentage_gains, 4), round(train_pnl, 2), round(train_market_pnl, 2), len(train_winner_agent.trade_log), round((len(train_winner_agent.trade_log)/len(self.trainer.df_train)) * 12, 4)]
 
+                round(win_loss_ratio - 1, 4), round(consistency_bonus/2000, 4), round(sum_percentage_gains, 4), round(train_pnl, 2), round(train_market_pnl, 2), len(train_winner_agent.trade_log), round((len(train_winner_agent.trade_log)/len(self.trainer.df_train)) * 12, 4)
+                self.trainer.logger.log(f"Winner stats --- Train vs Market PnL = ${round(train_pnl, 2)} vs {round(train_market_pnl, 2)} | Sum % gains = {round(sum_percentage_gains, 4)} | Win/Loss ratio = {round(win_loss_ratio - 1, 4)} | Consistency bonus = {round(consistency_bonus/2000, 4)}", level="DEBUG")
                 # test_metrics = self.trainer.calculate_metrics(winner_agent)
                 # train_metrics = self.trainer.calculate_metrics(train_winner_agent)
                 self.trainer.visualize_trades_with_plotly(self.trainer.df_test, winner_agent.trade_log, self.trainer.df_train, train_winner_agent.trade_log, test_metrics, train_metrics, gen=str(self.generation))
             except Exception as e:
-                print("An error occurred:", e)
+                self.trainer.logger.log(f"An error occurred: {e}", level="ERROR")
 
             self.generation += 1
         else:
@@ -336,7 +381,9 @@ class CustomEvaluationReporter(neat.reporting.BaseReporter):
 
 
 if __name__ == "__main__":
+    config = ConfigReader('config.config')
     trainer = Trainer(TICKER="ETH/USD",
+                      config=config,
                       TFRAMES=['30Min', '2H'],
                       from_year=2023, 
                       from_month=10, 

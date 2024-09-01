@@ -7,17 +7,40 @@ from alpaca.data.historical import CryptoHistoricalDataClient
 from alpaca.data.requests import CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.historical import crypto
+
+try:
+    from NEATPaca.Logger import *
+    from NEATPaca.ConfigReader import *
+
+except:
+    from Logger import *
+    from ConfigReader import *
 # pip install C:\Users\jonat\OneDrive\Desktop\Data_2024\TA-lib\TA_Lib-0.4.24-cp39-cp39-win_amd64.whl
 
 class DataHandler:
-    def __init__(self, TICKER, TFRAMES, from_year=None, from_month=None, from_day=None):
+    def __init__(self, TICKER, config):
         self.TICKER = TICKER
-        self.TFRAMES = TFRAMES
-        self.from_year = from_year
-        self.from_month = from_month
-        self.from_day = from_day
+        self.TFRAMES = config.timeframes
+        self.from_year = config.from_year
+        self.from_month = config.from_month
+        self.from_day = config.from_day
+
+        if config.until_year and config.until_month and config.until_day:
+            self.until_year = config.until_year
+            self.until_month = config.until_month
+            self.until_day = config.until_day
+        else:
+            today = dt.datetime.today()
+            self.until_year, self.until_month, self.until_day = today.year, today.month, today.day
+
+
         self.client = CryptoHistoricalDataClient()
         self.folder_name = "./price_data"
+        self.logger = Logger(folder_path="data_handler_logs", 
+                        file_name="data_handler_log",
+                        level="DEBUG",
+                        rotation="daily",
+                        archive_freq="daily")
 
         self.name = self.create_filename()
         
@@ -29,26 +52,41 @@ class DataHandler:
     def create_filename(self):
         ticker_sanitized = self.TICKER.replace("/", "-")
         tframes_joined = '-'.join(self.TFRAMES)
-        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}"
+        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}__{self.until_year}_{self.until_month}_{self.until_year}"
         return self.name
     
     def dl_price_data(self):
-        # print('Downloading price data...')
-        today = str(dt.datetime.today())[:-7]
+        # logger.log(f"Starting download for {self.TICKER} price data", level="INFO")
+        # today = str(dt.datetime.today())[:-7]
+        # price_df = pd.DataFrame(columns=['Date_Time', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        # dt_end = dt.datetime.strptime(today, '%Y-%m-%d %H:%M:%S')
+        # dt_start = dt_end + dt.timedelta(days=-7)
+        # end_date = self.format_date(dt_end)
+        # start_date = self.format_date(dt_start)
+
+        self.logger.log(f"Starting download for {self.TICKER} price data", level="INFO")
+        until_date = dt.datetime(self.until_year, self.until_month, self.until_day)
+
         price_df = pd.DataFrame(columns=['Date_Time', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        dt_end = dt.datetime.strptime(today, '%Y-%m-%d %H:%M:%S')
+        dt_end = until_date
         dt_start = dt_end + dt.timedelta(days=-7)
         end_date = self.format_date(dt_end)
         start_date = self.format_date(dt_start)
 
         while dt_start > dt.datetime(self.from_year, self.from_month, self.from_day):
+            self.logger.log(f"Downloading {self.TICKER} data from {start_date} to {end_date}", level="DEBUG")
             data = self.get_historical_data(start_date, end_date)
             dt_end = dt_end + dt.timedelta(days=-7)
             dt_start = dt_end + dt.timedelta(days=-7)
             end_date = self.format_date(dt_end)
             start_date = self.format_date(dt_start)
 
-            price_df = pd.concat([data, price_df]).reset_index(drop=True)
+            data_clean = data.dropna(axis=1, how='all')
+            price_df_clean = price_df.dropna(axis=1, how='all')
+
+            # Concatenate non-empty columns dataframes
+            price_df = pd.concat([data_clean, price_df_clean]).reset_index(drop=True)
+            # price_df = pd.concat([data, price_df]).reset_index(drop=True)
 
         return price_df
     
@@ -137,10 +175,12 @@ class DataHandler:
         avg_gap = (current_gap_fm + current_gap_fs + current_gap_ms) / 3
         return avg_gap
     
-    def add_ta_indicators(self, df_agg):
+    def add_ta_indicators(self, df_agg, config):
+        self.logger.log(f"Calculating indicators for {self.TICKER}", level="INFO")
         df_timeframes_list = []
 
         for timeframe in self.TFRAMES:
+            self.logger.log(f"Calculating indicators by {timeframe} for {self.TICKER}", level="DEBUG")
             df_tf = self.convert_df_by_timeframe(df_agg, timeframe)
             df_tf = df_tf.dropna()
 
@@ -152,84 +192,115 @@ class DataHandler:
             # Create a pandas Series from 'cl' for percentage change calculation
             cl_series = pd.Series(cl, index=df_tf.index)
 
-            # Moving Averages
-            ma_fast = ta.SMA(cl, 7)
-            ma_medium = ta.SMA(cl, 28)
-            ma_slow = ta.SMA(cl, 99)
+            if config.use_ma_cross:
+                # Moving Averages
+                ma_fast = ta.SMA(cl, config.ma_cross_periods[0])
+                ma_medium = ta.SMA(cl, config.ma_cross_periods[1])
+                ma_slow = ta.SMA(cl, config.ma_cross_periods[2])
 
-            # Assign MA states
-            ma_states = np.vectorize(self.calculate_ma_state)(ma_fast, ma_medium, ma_slow)
-            df_tf[f'MA_State_{timeframe}'] = ma_states
+                # Assign MA states
+                ma_states = np.vectorize(self.calculate_ma_state)(ma_fast, ma_medium, ma_slow)
+                df_tf[f'MA_State_{timeframe}'] = ma_states
 
-            # Calculate and assign slope for each MA
-            df_tf[f'MA_Fast_Slope_{timeframe}'] = pd.Series(ma_fast).rolling(window=3).apply(self.calculate_slope, raw=True)
-            df_tf[f'MA_Medium_Slope_{timeframe}'] = pd.Series(ma_medium).rolling(window=3).apply(self.calculate_slope, raw=True)
-            df_tf[f'MA_Slow_Slope_{timeframe}'] = pd.Series(ma_slow).rolling(window=3).apply(self.calculate_slope, raw=True)
+            if config.use_ma_slope:
+                # Calculate and assign slope for each MA
+                df_tf[f'MA_Fast_Slope_{timeframe}'] = pd.Series(ma_fast).rolling(window=3).apply(self.calculate_slope, raw=True)
+                df_tf[f'MA_Medium_Slope_{timeframe}'] = pd.Series(ma_medium).rolling(window=3).apply(self.calculate_slope, raw=True)
+                df_tf[f'MA_Slow_Slope_{timeframe}'] = pd.Series(ma_slow).rolling(window=3).apply(self.calculate_slope, raw=True)
 
-            # Calculate and assign convergence/divergence
-            convergence_divergence = np.vectorize(self.calculate_convergence_divergence)(ma_fast, ma_medium, ma_slow)
-            df_tf[f'MA_Conv_Div_{timeframe}'] = convergence_divergence
+            if config.use_ma_conv_div:
+                # Moving Averages
+                ma_fast = ta.SMA(cl, config.ma_conv_div_periods[0])
+                ma_medium = ta.SMA(cl, config.ma_conv_div_periods[1])
+                ma_slow = ta.SMA(cl, config.ma_conv_div_periods[2])
 
-            # Bollinger Bands
-            upperband, middleband, lowerband = ta.BBANDS(cl, 20, 2, 2)
-            df_tf[f'BB_Upper_Percent_{timeframe}'] = (cl - upperband) / cl
-            df_tf[f'BB_Lower_Percent_{timeframe}'] = (cl - lowerband) / cl
+                # Calculate and assign convergence/divergence
+                convergence_divergence = np.vectorize(self.calculate_convergence_divergence)(ma_fast, ma_medium, ma_slow)
+                df_tf[f'MA_Conv_Div_{timeframe}'] = convergence_divergence
 
-            # Stochastic Oscillator
-            stoch_k, stoch_d = ta.STOCH(hi, lo, cl, 5, 3, 0, 3, 0)
-            df_tf[f'Stoch_K_{timeframe}'] = stoch_k / 100
-            df_tf[f'Stoch_D_{timeframe}'] = stoch_d / 100
-            df_tf[f'Stoch_State_{timeframe}'] = (stoch_k > stoch_d).astype(int)
+            if config.use_bbands:
+                # Bollinger Bands
+                upperband, middleband, lowerband = ta.BBANDS(cl, config.bbands_periods[0], config.bbands_periods[1], config.bbands_periods[2])
+                df_tf[f'BB_Upper_Percent_{timeframe}'] = (cl - upperband) / cl
+                df_tf[f'BB_Lower_Percent_{timeframe}'] = (cl - lowerband) / cl
 
-            # MACD
-            macd, macdsignal, macdhist = ta.MACD(cl, 12, 26, 9)
-            df_tf[f'MACD_State_{timeframe}'] = (macd > macdsignal).astype(int)
+            if config.use_stoch_cross:
+                # Stochastic Oscillator
+                stoch_k, stoch_d = ta.STOCH(hi, lo, cl, config.stoch_periods[0], config.stoch_periods[1], config.stoch_periods[2], config.stoch_periods[3], config.stoch_periods[4])
+                df_tf[f'Stoch_K_{timeframe}'] = stoch_k / 100
+                df_tf[f'Stoch_D_{timeframe}'] = stoch_d / 100
+                df_tf[f'Stoch_State_{timeframe}'] = (stoch_k > stoch_d).astype(int)
 
-            # OBV
-            obv = ta.OBV(cl, vo)
-            df_tf['OBV'] = obv
-            obv_ma = ta.SMA(obv, 20)
-            df_tf[f'OBV_Trend_{timeframe}'] = (obv > obv_ma).astype(int)
+            if config.use_macd_cross:
+                # MACD
+                macd, macdsignal, macdhist = ta.MACD(cl, config.macd_cross_periods[0], config.macd_cross_periods[1], config.macd_cross_periods[2])
+                df_tf[f'MACD_State_{timeframe}'] = (macd > macdsignal).astype(int)
 
-            # Price % Change for the Last 24 Bars as new columns
-            for i in range(1, 25):
-                df_tf[f'Price_pct_change_{i}_{timeframe}'] = cl_series.pct_change(periods=i).shift(-i)
+            if config.use_obv_ma_cross:
+                # OBV
+                obv = ta.OBV(cl, vo)
+                df_tf['OBV'] = obv
+                obv_ma = ta.SMA(obv, config.obv_ma_period)
+                df_tf[f'OBV_Trend_{timeframe}'] = (obv > obv_ma).astype(int)
 
-            # PSAR indicator - Binary indicator where 1 represents PSAR above close price, and 0 otherwise
-            df_tf[f'PSAR_{timeframe}'] = ta.SAR(hi, lo)
-            df_tf[f'PSAR_{timeframe}'] = (df_tf[f'PSAR_{timeframe}'] > cl).astype(int)
+            if config.use_pct_change:
+                # Price % Change for the Last 24 Bars as new columns
+                for i in range(1, config.pct_change_period):
+                    df_tf[f'Price_pct_change_{i}_{timeframe}'] = cl_series.pct_change(periods=i).shift(-i)
 
-            periods = [7, 14, 28, 100]
-            for period in periods:
-                column_name = f'ADX_{period}_{timeframe}'
-                df_tf[column_name] = ta.ADX(hi, lo, cl, period) / 100
+            if config.use_psar_cl_cross:
+                # PSAR indicator - Binary indicator where 1 represents PSAR above close price, and 0 otherwise
+                df_tf[f'PSAR_{timeframe}'] = ta.SAR(hi, lo)
+                df_tf[f'PSAR_{timeframe}'] = (df_tf[f'PSAR_{timeframe}'] > cl).astype(int)
 
-                column_name = f'RSI_{period}_{timeframe}'
-                df_tf[column_name] = ta.RSI(cl, period) / 100
+            # periods = [7, 14, 28, 100]
+            # for period in periods:
 
-                column_name = f'CCI_{period}_{timeframe}'
-                df_tf[column_name] = ta.CCI(hi, lo, cl, period)
-                df_tf[column_name] = (df_tf[column_name]) / 100
+            if config.use_adx:
+                for period in config.adx_periods:
+                    column_name = f'ADX_{period}_{timeframe}'
+                    df_tf[column_name] = ta.ADX(hi, lo, cl, period) / 100
 
-                column_name = f'MFI_{period}_{timeframe}'
-                df_tf[column_name] = ta.MFI(hi, lo, cl, vo, period) / 100
+            if config.use_rsi:
+                for period in config.rsi_periods:
+                    column_name = f'RSI_{period}_{timeframe}'
+                    df_tf[column_name] = ta.RSI(cl, period) / 100
 
-                column_name = f'AROONOSC_{period}_{timeframe}'
-                df_tf[column_name] = (ta.AROONOSC(hi, lo, period) + 100) / 200
+            if config.use_cci:
+                for period in config.cci_periods:
+                    column_name = f'CCI_{period}_{timeframe}'
+                    df_tf[column_name] = ta.CCI(hi, lo, cl, period)
+                    df_tf[column_name] = (df_tf[column_name]) / 100
 
-                column_name = f'CMO_{period}_{timeframe}'
-                df_tf[column_name] = (ta.CMO(cl, period) + 100) / 200
+            if config.use_mfi:
+                for period in config.mfi_periods:
+                    column_name = f'MFI_{period}_{timeframe}'
+                    df_tf[column_name] = ta.MFI(hi, lo, cl, vo, period) / 100
 
-                highest_price = df_tf['High'].rolling(window=period).max()
-                lowest_price = df_tf['Low'].rolling(window=period).min()
-                df_tf[f'Close_to_High_Percent_{period}_{timeframe}'] = (df_tf['Close'] - highest_price) / highest_price
-                df_tf[f'Close_to_Low_Percent_{period}_{timeframe}'] = (df_tf['Close'] - lowest_price) / lowest_price
+            if config.use_aroonosc:
+                for period in config.aroonosc_periods:
+                    column_name = f'AROONOSC_{period}_{timeframe}'
+                    df_tf[column_name] = (ta.AROONOSC(hi, lo, period) + 100) / 200
 
-            # Scaling ULTOSC values to 0-1 range, using specific time periods
-            ULTOSC_periods = [(7, 14, 28), (14, 28, 56)]
-            for periods in ULTOSC_periods:
-                column_name = f'ULTOSC_{"_".join(map(str, periods))}_{timeframe}'
-                df_tf[column_name] = ta.ULTOSC(hi, lo, cl, *periods) / 100
+            if config.use_cmo:
+                for period in config.cmo_periods:
+                    column_name = f'CMO_{period}_{timeframe}'
+                    df_tf[column_name] = (ta.CMO(cl, period) + 100) / 200
+
+            if config.use_hi_lo_pct:
+                for period in config.hi_lo_pct_periods:
+                    highest_price = df_tf['High'].rolling(window=period).max()
+                    lowest_price = df_tf['Low'].rolling(window=period).min()
+                    df_tf[f'Close_to_High_Percent_{period}_{timeframe}'] = (df_tf['Close'] - highest_price) / highest_price
+                    df_tf[f'Close_to_Low_Percent_{period}_{timeframe}'] = (df_tf['Close'] - lowest_price) / lowest_price
+
+            if config.use_psar_cl_cross:
+                # Scaling ULTOSC values to 0-1 range, using specific time periods
+                ULTOSC_periods = [(config.ultosc_1_periods[0], config.ultosc_1_periods[1], config.ultosc_1_periods[2]), 
+                                  (config.ultosc_2_periods[0], config.ultosc_2_periods[1], config.ultosc_2_periods[2])]
+                for periods in ULTOSC_periods:
+                    column_name = f'ULTOSC_{"_".join(map(str, periods))}_{timeframe}'
+                    df_tf[column_name] = ta.ULTOSC(hi, lo, cl, *periods) / 100
 
             # Now dropping the original price columns
             df_tf = df_tf.drop(['Open', 'High', 'Low', 'Close', 'Volume', 'OBV'], axis=1)
@@ -254,6 +325,7 @@ class DataHandler:
         return new_df
     
     def aggregate_data(self):
+        self.logger.log(f"Aggregating data to match {self.TFRAMES[0]}", level="INFO")
         df_agg = self.df.copy()
 
         # Ensure 'Date_Time' is a datetime type and set as index
@@ -276,11 +348,17 @@ class DataHandler:
         if not os.path.exists(self.folder_name):
             os.makedirs(self.folder_name)
 
-    def get_data(self):
+    def get_data(self, config):
+        file_path = os.path.join(self.folder_name, self.name + '.csv')
+        self.logger.log(f"Checking if data for {self.TICKER} was already downloaded", level="DEBUG")
+        if os.path.isfile(file_path):
+            self.df_ta = pd.read_csv(file_path)
+            self.logger.log(f"File '{file_path}' already exists. Skipping data processing step.")
+            return 
         self.create_folder()
         self.df = self.dl_price_data()
         df_agg = self.aggregate_data()
-        self.df_ta = self.add_ta_indicators(df_agg)
+        self.df_ta = self.add_ta_indicators(df_agg, config)
         self.df_ta.to_csv(self.folder_name + '/' + self.name + '.csv', index=False)
 
     def update_data(self):
@@ -307,7 +385,7 @@ class DataHandler:
 
             if 'Date_Time' in self.df.columns:
                 df_agg = self.aggregate_data()
-                self.df_ta = self.add_ta_indicators(df_agg)
+                self.df_ta = self.add_ta_indicators(df_agg, config)
                 current_last_df_ta_row = self.df_ta.tail(1)['Date_Time'].values[0]
                 if self.last_row_df_ta is None or self.last_row_df_ta['Date_Time'].values[0] != current_last_df_ta_row:
 
@@ -316,14 +394,18 @@ class DataHandler:
 
 
 if __name__ == "__main__":
-    handler = DataHandler(TICKER="ETH/USD", 
-                          TFRAMES=['30Min', '2H'], 
-                          from_year=2023, 
-                          from_month=10, 
-                          from_day=1)
+
+    config = ConfigReader('config.config')
+    handler = DataHandler(TICKER="DOGE/USD", 
+                          config=config)
     
-    handler.get_data()
+    handler.get_data(config=config)
     print(f"{handler.name}\tMinute Dataframe")
     print(handler.df)
     print(f"\n\n{handler.name}\tTA Dataframe")
     print(handler.df_ta)
+    # cols = handler.df_ta.columns
+    for column in handler.df_ta.columns:
+        min_value = handler.df_ta[column].round(3).min()
+        max_value = handler.df_ta[column].round(3).max()
+        print(f"- {column}: {min_value} to {max_value}")

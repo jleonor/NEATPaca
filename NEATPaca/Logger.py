@@ -14,14 +14,28 @@ class Logger:
         self.archive_freq = archive_freq
         self.lock = threading.Lock()
 
+        if self.rotation and (self.rotation != "daily" and self.rotation != "hourly"):
+            raise ValueError("Rotation value must be either empty, 'daily' or 'hourly'")
+
+        if self.archive_freq and (self.archive_freq != "daily" and self.archive_freq != "hourly"):
+            raise ValueError("Archiving frequency must be either empty, 'daily' or 'hourly'")
+
+        if self.rotation == "daily" and self.archive_freq == "hourly":
+            raise ValueError("Rotation value cannot be greater than archiving frequency.")
+
+        if not self.rotation and self.archive_freq:
+            raise ValueError("Archiving frequency cannot have a value if no value for rotation is provided")
+
         if not os.path.exists(self.folder_path):
             os.makedirs(self.folder_path)
-        if not os.path.exists(self.archive_folder):
-            os.makedirs(self.archive_folder)
+        if self.archive_freq:
+            if not os.path.exists(self.archive_folder):
+                os.makedirs(self.archive_folder)
 
-        self.determine_last_time_suffix()
+        self.time_suffix = self.current_time_format()
         self.create_log_file()
-        self.initial_archive_logs()
+        self.archive_logs()
+
 
     def determine_last_time_suffix(self):
         max_suffix = ""
@@ -111,7 +125,7 @@ class Logger:
                         )
 
 if __name__ == "__main__":
-    logger = Logger("logs_test", "logfile_test", level="DEBUG") #, rotation="daily", archive_freq="daily")
+    logger = Logger("logs_test", "logfile_test", level="DEBUG", rotation="hourly")
     logger.log("This is a DEBUG log message.", level="DEBUG")
     logger.log("This is an INFO log message.", level="INFO")
     logger.log("This is a WARNING log message.", level="WARNING")
