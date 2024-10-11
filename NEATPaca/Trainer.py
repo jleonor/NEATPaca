@@ -54,14 +54,14 @@ class Trainer():
         os.makedirs(self.viz_folder_name, exist_ok=True)
         os.makedirs(self.checkpoint_folder_name, exist_ok=True)
 
-    def load_population(self):
-        """Load the population from a checkpoint if available, or start a new population."""
-        checkpoint_path = self.find_latest_checkpoint()
-        if checkpoint_path:
-            self.population = neat.Checkpointer.restore_checkpoint(checkpoint_path)
-        else:
-            self.population = neat.Population(self.config)
-        self.add_reporters()
+    # def load_population(self):
+    #     """Load the population from a checkpoint if available, or start a new population."""
+    #     checkpoint_path = self.find_latest_checkpoint()
+    #     if checkpoint_path:
+    #         self.population = neat.Checkpointer.restore_checkpoint(checkpoint_path)
+    #     else:
+    #         self.population = neat.Population(self.config)
+    #     self.add_reporters()
 
     def add_reporters(self):
         """Add NEAT reporters for output and saving checkpoints."""
@@ -126,15 +126,17 @@ class Trainer():
             agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
             agent.set_network(genome)
             agent.evaluate_on_data(self.df_train, self.df_ta_train)
+            self.calculate_fitness(genome, agent)
 
-            num_trades = len(agent.trade_log)
-            if num_trades < 2:
-                genome.fitness = -200
-            else:
-                win_loss_ratio, consistency_bonus, sum_percentage_gains = self.calculate_metrics(agent)
-                trade_candle_ratio = len(agent.trade_log)/len(self.df_train)
-                fitness = (((win_loss_ratio - 1) + (consistency_bonus/2000)) * (trade_candle_ratio * 12)) * sum_percentage_gains
-                genome.fitness = -abs(fitness) if win_loss_ratio < 0 or sum_percentage_gains < 0 else abs(fitness)
+    def calculate_fitness(self, genome, agent):
+        num_trades = len(agent.trade_log)
+        if num_trades < 2:
+            genome.fitness = -200
+        else:
+            win_loss_ratio, consistency_bonus, sum_percentage_gains = self.calculate_metrics(agent)
+            trade_candle_ratio = len(agent.trade_log)/len(self.df_train)
+            fitness = (((win_loss_ratio - 1) + (consistency_bonus/2000)) * (trade_candle_ratio * 12)) * sum_percentage_gains
+            genome.fitness = -abs(fitness) if win_loss_ratio < 0 or sum_percentage_gains < 0 else abs(fitness)
 
     def calculate_metrics(self, agent):
         # Calculate win/loss ratio
