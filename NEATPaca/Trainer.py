@@ -9,6 +9,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
+import random
 
 
 class Trainer():
@@ -53,15 +54,6 @@ class Trainer():
         os.makedirs(self.model_folder_name, exist_ok=True)
         os.makedirs(self.viz_folder_name, exist_ok=True)
         os.makedirs(self.checkpoint_folder_name, exist_ok=True)
-
-    # def load_population(self):
-    #     """Load the population from a checkpoint if available, or start a new population."""
-    #     checkpoint_path = self.find_latest_checkpoint()
-    #     if checkpoint_path:
-    #         self.population = neat.Checkpointer.restore_checkpoint(checkpoint_path)
-    #     else:
-    #         self.population = neat.Population(self.config)
-    #     self.add_reporters()
 
     def add_reporters(self):
         """Add NEAT reporters for output and saving checkpoints."""
@@ -108,8 +100,8 @@ class Trainer():
         file_path = f'price_data/{self.name}.csv'
         df = pd.read_csv(file_path)
         df.ffill(inplace=True)
-        # df.fillna(method='ffill', inplace=True)
 
+        # Define columns
         cols_to_remove = ['Date_Time', 'Open', 'High', 'Low', 'Close', 'Volume']
         cols = df.columns.tolist()
         ta_columns = [col for col in cols if col not in cols_to_remove]
@@ -121,11 +113,34 @@ class Trainer():
         self.df_ta_test = df_ta.iloc[train_size:].reset_index(drop=True)
         self.df_test = df.iloc[train_size:].reset_index(drop=True)
 
+    def select_random_subset(self):
+        subset_size = int(0.02 * len(self.df_train))  # 2% of the total training dataset
+        minimum_rows = 200  # Minimum threshold for rows
+
+        if subset_size < minimum_rows:
+            error_message = f"Subset size ({subset_size}) is below the minimum threshold ({minimum_rows})"
+            self.logger.log(error_message, level="CRITICAL")
+            raise ValueError(error_message)
+
+        # Randomly select a starting index for the subset
+        start_idx = random.randint(0, len(self.df_train) - subset_size)
+        end_idx = start_idx + subset_size
+
+        # Create the subset for this generation
+        self.subset_df_train = self.df_train.iloc[start_idx:end_idx].reset_index(drop=True)
+        self.subset_df_ta_train = self.df_ta_train.iloc[start_idx:end_idx].reset_index(drop=True)
+        self.logger.log(f"Selected new data subset for generation: rows {start_idx} to {end_idx}", level="DEBUG")
+
+
     def eval_genomes(self, genomes, config):
+        self.select_random_subset()
+
         for genome_id, genome in genomes:
             agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
             agent.set_network(genome)
-            agent.evaluate_on_data(self.df_train, self.df_ta_train)
+
+            # Use the subset data for evaluation
+            agent.evaluate_on_data(self.subset_df_train, self.subset_df_ta_train)
             self.calculate_fitness(genome, agent)
 
     def calculate_fitness(self, genome, agent):
@@ -179,7 +194,7 @@ class Trainer():
             train_pnl = train_winner_agent.portfolio - train_winner_agent.starting_money
             train_market_pnl = self.calculate_market_performance(self.df_train)
 
-            winner_agent = TradingAgent(self.starting_money, self.transaction_fee_cnt_percent, self.config)
+            winner_agent = TradingAgent(self.starting_money, self.transaction_fee_percent, self.config)
             winner_agent.set_network(winner)
             winner_agent.reset()
 
@@ -275,14 +290,63 @@ class Trainer():
             row=row, col=col
         )
 
+    def add_agent_money_chart(self, fig, trade_log_df, row, col):
+        fig.add_trace(
+            go.Scatter(
+                x=trade_log_df['Date_Time'],
+                y=trade_log_df['Portfolio'],
+                mode='lines',
+                name='Agent Money',
+                showlegend=False
+            ),
+            row=row, col=col
+        )
+
+    def add_trade_history_table(self, fig, trade_log_df, row, col):
+        valid_trades = trade_log_df[trade_log_df['action'] != 'N/A']
+        table_data = valid_trades[['Date_Time', 'action', 'price', 'Portfolio']]
+        table_data.loc[:, 'Date_Time'] = table_data['Date_Time'].astype(str).str[:-9]
+        colors = [['#ABEBC6' if action == 'Buy' else '#F5B7B1' for action in table_data['action']]]
+        
+        fig.add_trace(
+            go.Table(
+                header=dict(
+                    values=['Date_Time', 'Action', 'Price', 'Portfolio'],
+                    fill_color='grey',
+                    align='left',
+                    font=dict(color='white', size=12)
+                ),
+                cells=dict(
+                    values=[table_data.Date_Time, table_data.action, table_data.price, table_data.Portfolio],
+                    fill_color=colors,
+                    align='left'
+                )
+            ),
+            row=row, col=col
+        )
+
+
     # Main function to visualize trades with Plotly
     def visualize_trades_with_plotly(self, df_test, trade_log_test, df_train, trade_log_train, test_metrics, train_metrics, gen=''):
-        trade_log_train_df, trade_path_test_df = self.prepare_viz_data(self.df_train, trade_log_train, self.df_test, trade_log_test)
+        trade_log_train_df, trade_log_test_df = self.prepare_viz_data(self.df_train, trade_log_train, self.df_test, trade_log_test)
         fig = self.create_figure(self.df_train, self.df_test)
+        
+        # Add price charts for train and test data
         self.add_price_chart(fig, self.df_train, trade_log_train_df, row=2, col=1)
-        self.add_price_chart(fig, self.df_test, trade_path_test_df, row=2, col=2)
+        self.add_price_chart(fig, self.df_test, trade_log_test_df, row=2, col=2)
+        
+        # Add metrics tables for train and test data
         self.add_metrics_table(fig, train_metrics, col=1)
         self.add_metrics_table(fig, test_metrics, col=2)
+        
+        # Add agent money charts for train and test data
+        self.add_agent_money_chart(fig, trade_log_train_df, row=3, col=1)
+        self.add_agent_money_chart(fig, trade_log_test_df, row=3, col=2)
+        
+        # Add trade history tables for train and test data
+        self.add_trade_history_table(fig, trade_log_train_df, row=4, col=1)
+        self.add_trade_history_table(fig, trade_log_test_df, row=4, col=2)
+        
         fig.update_layout(
             title={
                 'text': 'Trade History, Agent Money Over Time, and Trade Log (Generation #' + str(gen) + ')',
@@ -290,10 +354,11 @@ class Trainer():
                 'xanchor': 'center'
             }
         )
+        
         # Save the figure as an HTML file
-        ticker = "sample_ticker"  # Replace with actual ticker variable if applicable
         html_file_path = os.path.join('viz_outputs', self.name + '_Gen_' + str(gen) + '.html')
         fig.write_html(html_file_path)
+
 
     # Helper to create the main figure layout
     def create_figure(self, df_train, df_test):
@@ -314,7 +379,7 @@ class Trainer():
 
     # Function to evaluate the winner on the test data
     def evaluate_winner_on_test_data(self, winner, config):
-        winner_agent = TradingAgent(self.STARTING_MONEY, self.TRANSACTION_FEE_PERCENT, config)
+        winner_agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
         winner_agent.set_network(winner)
         test_pnl = winner_agent.evaluate_on_data(self.df_test, self.df_ta_test)
 
@@ -322,7 +387,7 @@ class Trainer():
 
     # Function to evaluate the winner on the train data
     def evaluate_winner_on_train_data(self, winner, config):
-        winner_agent = TradingAgent(self.STARTING_MONEY, self.TRANSACTION_FEE_PERCENT, config)
+        winner_agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
         winner_agent.set_network(winner)
         test_pnl = winner_agent.evaluate_on_data(self.df_train, self.df_ta_train)
 
@@ -332,9 +397,9 @@ class Trainer():
     def calculate_market_performance(self, df_market):
         initial_price = df_market.iloc[0]['Close']
         final_price = df_market.iloc[-1]['Close']
-        bitcoins_bought = self.STARTING_MONEY / initial_price
+        bitcoins_bought = self.starting_money / initial_price
         final_value = bitcoins_bought * final_price
-        market_pnl = final_value - self.STARTING_MONEY
+        market_pnl = final_value - self.starting_money
         return market_pnl
 
 class CustomEvaluationReporter(neat.reporting.BaseReporter):

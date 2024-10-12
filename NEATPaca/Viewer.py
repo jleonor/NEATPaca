@@ -6,7 +6,7 @@ import socketserver
 import json
 
 class Viewer:
-    def __init__(self, dir_path="viz_output"):
+    def __init__(self, dir_path="viz_outputs"):
         self.dir_path = dir_path
         self.server_thread = None
         self.master_chart_path = os.path.join(self.dir_path, "master_chart.html")
@@ -151,7 +151,7 @@ class Viewer:
         self.server_thread = Thread(target=self.run_server)
         self.server_thread.start()
         print(f"Serving at port {self.PORT}")
-        # self.open_browser()  # Open the browser after the server starts
+        self.open_browser()  # Open the browser after the server starts
 
     def run_server(self):
         """Function to run the server in a thread."""

@@ -1,6 +1,5 @@
 import numpy as np
 import neat
-import cupy as cp
 
 
 class TradingAgent:
@@ -49,7 +48,7 @@ class TradingAgent:
         Now includes position status as an additional input feature and potential percentage gain."""
         
         # Ensure input_data is a CuPy array
-        input_data = cp.asarray(input_data)
+        input_data = np.asarray(input_data)
         
         # Calculate potential percentage gain if position is open
         if self.position_open:
@@ -67,16 +66,13 @@ class TradingAgent:
         last_action_period = self.last_action_period / 1000
         
         # Add the position status and potential gain as features
-        extended_input = cp.append(input_data, [potential_gain, position_status, last_action_period])
+        extended_input = np.append(input_data, [potential_gain, position_status, last_action_period])
         output = self.net.activate(extended_input)  # Ensure that 'activate' function can handle CuPy arrays
         
         if isinstance(output, list):
-            # Ensure all elements in the list are CuPy arrays
-            output = cp.array(output)
-        # print(output)
-        # for i in output:
-        #     print(i)
-        return cp.argmax(output)
+            output = np.array(output)
+
+        return np.argmax(output)
 
     def execute_trade(self, decision, price, date_time):
         """Execute a trade based on the decision and updates the agent's balance and position status, including the
