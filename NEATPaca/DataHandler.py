@@ -52,7 +52,7 @@ class DataHandler:
     def create_filename(self):
         ticker_sanitized = self.TICKER.replace("/", "-")
         tframes_joined = '-'.join(self.TFRAMES)
-        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}__{self.until_year}_{self.until_month}_{self.until_year}"
+        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}__{self.until_year}_{self.until_month}_{self.until_day}"
         return self.name
     
     def dl_price_data(self):

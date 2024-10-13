@@ -3,13 +3,15 @@ import neat
 from NEATPaca.NEATAgent import *
 from NEATPaca.Logger import *
 from NEATPaca.ConfigReader import *
-import pickle
+# import pickle
+import dill as pickle
 import os
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 import random
+import json
 
 
 class Trainer():
@@ -39,8 +41,9 @@ class Trainer():
         self.transaction_fee_percent = config.transaction_fee
         self.name = self.create_filename()
         self.model_folder_name = "./models"
-        self.viz_folder_name = "./viz_outputs"
+        # self.viz_folder_name = "./viz_outputs"
         self.checkpoint_folder_name = "./training_checkpoints"
+        self.training_results = "./training_results"
 
         self.create_folders()
         self.config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
@@ -52,19 +55,20 @@ class Trainer():
     def create_folders(self):
         """Creates necessary folders if they do not exist."""
         os.makedirs(self.model_folder_name, exist_ok=True)
-        os.makedirs(self.viz_folder_name, exist_ok=True)
+        # os.makedirs(self.viz_folder_name, exist_ok=True)
         os.makedirs(self.checkpoint_folder_name, exist_ok=True)
+        os.makedirs(self.training_results, exist_ok=True)
 
     def add_reporters(self):
         """Add NEAT reporters for output and saving checkpoints."""
         self.population.add_reporter(neat.StdOutReporter(True))
         self.population.add_reporter(neat.StatisticsReporter())
-        self.population.add_reporter(neat.Checkpointer(generation_interval=1, filename_prefix=f'{self.checkpoint_folder_name}/checkpoint_'))
+        self.population.add_reporter(CustomCheckpointer(generation_interval=1, filename_prefix=f'{self.checkpoint_folder_name}/{self.name}_checkpoint_'))
         self.population.add_reporter(CustomEvaluationReporter(self))
 
     def find_latest_checkpoint(self):
         """Find the most recent checkpoint file in the checkpoint directory."""
-        checkpoints = [os.path.join(self.checkpoint_folder_name, f) for f in os.listdir(self.checkpoint_folder_name) if f.startswith("checkpoint_")]
+        checkpoints = [os.path.join(self.checkpoint_folder_name, f) for f in os.listdir(self.checkpoint_folder_name) if f.startswith(self.name + '_checkpoint_')]
         if checkpoints:
             return max(checkpoints, key=os.path.getctime)
         return None
@@ -72,7 +76,7 @@ class Trainer():
     def create_filename(self):
         ticker_sanitized = self.ticker.replace("/", "-")
         tframes_joined = '-'.join(self.TFRAMES)
-        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}__{self.until_year}_{self.until_month}_{self.until_year}"
+        self.name = f"{ticker_sanitized}_{tframes_joined}_{self.from_year}_{self.from_month}_{self.from_day}__{self.until_year}_{self.until_month}_{self.until_day}"
 
         return self.name
 
@@ -88,13 +92,11 @@ class Trainer():
 
     def load_population(self):
         if self.checkpoint_load:
-            self.population = neat.Checkpointer.restore_checkpoint(self.checkpoint_load)
+            self.population = CustomCheckpointer.restore_checkpoint(self.checkpoint_load)
         else:
             self.population = neat.Population(self.config)
 
-        self.population.add_reporter(neat.StdOutReporter(True))
-        self.population.add_reporter(neat.StatisticsReporter())
-        self.population.add_reporter(CustomEvaluationReporter(self))
+        self.add_reporters()
 
     def load_data(self):
         file_path = f'price_data/{self.name}.csv'
@@ -133,15 +135,15 @@ class Trainer():
 
 
     def eval_genomes(self, genomes, config):
-        self.select_random_subset()
+        self.select_random_subset()  # Only select a subset for training
 
         for genome_id, genome in genomes:
             agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
             agent.set_network(genome)
-
             # Use the subset data for evaluation
             agent.evaluate_on_data(self.subset_df_train, self.subset_df_ta_train)
             self.calculate_fitness(genome, agent)
+
 
     def calculate_fitness(self, genome, agent):
         num_trades = len(agent.trade_log)
@@ -211,7 +213,7 @@ class Trainer():
                 test_metrics = [round(win_loss_ratio - 1, 4), round(consistency_bonus / 2000, 4), round(sum_percentage_gains, 4), round(test_pnl, 2), round(test_market_pnl, 2), len(winner_agent.trade_log), round((len(winner_agent.trade_log) / len(self.df_test)) * 12, 4)]
                 win_loss_ratio, consistency_bonus, sum_percentage_gains = self.calculate_metrics(train_winner_agent)
                 train_metrics = [round(win_loss_ratio - 1, 4), round(consistency_bonus / 2000, 4), round(sum_percentage_gains, 4), round(train_pnl, 2), round(train_market_pnl, 2), len(train_winner_agent.trade_log), round((len(train_winner_agent.trade_log) / len(self.df_train)) * 12, 4)]
-                self.visualize_trades_with_plotly(self.df_test, winner_agent.trade_log, self.df_train, train_winner_agent.trade_log, test_metrics, train_metrics, gen='WINNER')
+                # self.visualize_trades_with_plotly(self.df_test, winner_agent.trade_log, self.df_train, train_winner_agent.trade_log, test_metrics, train_metrics, gen='WINNER')
             except Exception as e:
                 print(f"An error occurred: {e}")
 
@@ -381,17 +383,19 @@ class Trainer():
     def evaluate_winner_on_test_data(self, winner, config):
         winner_agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
         winner_agent.set_network(winner)
+        winner_agent.reset()  # Reset the agent before evaluating on the test set
         test_pnl = winner_agent.evaluate_on_data(self.df_test, self.df_ta_test)
 
         return winner_agent, test_pnl
 
+
     # Function to evaluate the winner on the train data
     def evaluate_winner_on_train_data(self, winner, config):
-        winner_agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
-        winner_agent.set_network(winner)
-        test_pnl = winner_agent.evaluate_on_data(self.df_train, self.df_ta_train)
-
-        return winner_agent, test_pnl
+        train_winner_agent = TradingAgent(self.starting_money, self.transaction_fee_percent, config)
+        train_winner_agent.set_network(winner)
+        train_winner_agent.reset()  # Reset before training evaluation
+        train_pnl = train_winner_agent.evaluate_on_data(self.df_train, self.df_ta_train)
+        return train_winner_agent, train_pnl
 
     # Market Performance (Buy-and-Hold Strategy)
     def calculate_market_performance(self, df_market):
@@ -401,6 +405,25 @@ class Trainer():
         final_value = bitcoins_bought * final_price
         market_pnl = final_value - self.starting_money
         return market_pnl
+    
+    def save_generation_data(self, gen, metrics, train_trade_log, test_trade_log):
+        parent_folder = os.path.join('training_results', self.name)
+        generation_folder = os.path.join(parent_folder, f"_Gen_{gen}")
+        os.makedirs(generation_folder, exist_ok=True)
+
+        # Save metrics as JSON
+        with open(os.path.join(generation_folder, 'metrics.json'), 'w') as f:
+            json.dump(metrics, f)
+
+        # Ensure each trade log reflects the correct evaluation
+        train_trade_log_df = pd.DataFrame(train_trade_log)
+        test_trade_log_df = pd.DataFrame(test_trade_log)
+
+        # Save separate CSV files for train and test logs
+        train_trade_log_df.to_csv(os.path.join(generation_folder, 'train_trade_log.csv'), index=False)
+        test_trade_log_df.to_csv(os.path.join(generation_folder, 'test_trade_log.csv'), index=False)
+
+
 
 class CustomEvaluationReporter(neat.reporting.BaseReporter):
     def __init__(self, trainer):
@@ -415,36 +438,66 @@ class CustomEvaluationReporter(neat.reporting.BaseReporter):
 
     def end_generation(self, config, population, species_set):
         evaluated_genomes = [g for g in population.values() if g.fitness is not None]
+        
         if evaluated_genomes:
             best_genome = max(evaluated_genomes, key=lambda g: g.fitness)
-            
-            # Use the trainer instance to call methods
+
+            # Train evaluation on the subset (already handled in eval_genomes)
             train_winner_agent, train_pnl = self.trainer.evaluate_winner_on_train_data(best_genome, config)
             train_market_pnl = self.trainer.calculate_market_performance(self.trainer.df_train)
-
+            
+            # Full Test Set Evaluation
             winner_agent, test_pnl = self.trainer.evaluate_winner_on_test_data(best_genome, config)
             test_market_pnl = self.trainer.calculate_market_performance(self.trainer.df_test)
 
-            # Process and visualize results, handle exceptions as before
-            try:
+            # Calculate metrics for the test data on the full dataset
+            win_loss_ratio, consistency_bonus, sum_percentage_gains = self.trainer.calculate_metrics(winner_agent)
+            train_metrics = {
+                "win_loss_ratio": round(win_loss_ratio - 1, 4),
+                "consistency_bonus": round(consistency_bonus / 2000, 4),
+                "sum_percentage_gains": round(sum_percentage_gains, 4),
+                "test_pnl": round(test_pnl, 2),
+                "test_market_pnl": round(test_market_pnl, 2),
+                "num_trades": len(winner_agent.trade_log),
+                "trade_to_candle_ratio": round((len(winner_agent.trade_log) / len(self.trainer.df_test)) * 12, 4)
+            }
 
-                win_loss_ratio, consistency_bonus, sum_percentage_gains = self.trainer.calculate_metrics(winner_agent)
-                test_metrics = [round(win_loss_ratio - 1, 4), round(consistency_bonus/2000, 4), round(sum_percentage_gains,4), round(test_pnl, 2), round(test_market_pnl, 2), len(winner_agent.trade_log), round((len(winner_agent.trade_log)/len(self.trainer.df_test)) * 12, 4)]
-                win_loss_ratio, consistency_bonus, sum_percentage_gains = self.trainer.calculate_metrics(train_winner_agent)
-                train_metrics = [round(win_loss_ratio - 1, 4), round(consistency_bonus/2000, 4), round(sum_percentage_gains, 4), round(train_pnl, 2), round(train_market_pnl, 2), len(train_winner_agent.trade_log), round((len(train_winner_agent.trade_log)/len(self.trainer.df_train)) * 12, 4)]
-
-                round(win_loss_ratio - 1, 4), round(consistency_bonus/2000, 4), round(sum_percentage_gains, 4), round(train_pnl, 2), round(train_market_pnl, 2), len(train_winner_agent.trade_log), round((len(train_winner_agent.trade_log)/len(self.trainer.df_train)) * 12, 4)
-                self.trainer.logger.log(f"Winner stats --- Train vs Market PnL = ${round(train_pnl, 2)} vs {round(train_market_pnl, 2)} | Sum % gains = {round(sum_percentage_gains, 4)} | Win/Loss ratio = {round(win_loss_ratio - 1, 4)} | Consistency bonus = {round(consistency_bonus/2000, 4)}", level="DEBUG")
-                # test_metrics = self.trainer.calculate_metrics(winner_agent)
-                # train_metrics = self.trainer.calculate_metrics(train_winner_agent)
-                self.trainer.visualize_trades_with_plotly(self.trainer.df_test, winner_agent.trade_log, self.trainer.df_train, train_winner_agent.trade_log, test_metrics, train_metrics, gen=str(self.generation))
-            except Exception as e:
-                self.trainer.logger.log(f"An error occurred: {e}", level="ERROR")
-
+            # Calculate metrics for the train data on the subset
+            win_loss_ratio, consistency_bonus, sum_percentage_gains = self.trainer.calculate_metrics(train_winner_agent)
+            test_metrics = {
+                "win_loss_ratio": round(win_loss_ratio - 1, 4),
+                "consistency_bonus": round(consistency_bonus / 2000, 4),
+                "sum_percentage_gains": round(sum_percentage_gains, 4),
+                "train_pnl": round(train_pnl, 2),
+                "train_market_pnl": round(train_market_pnl, 2),
+                "num_trades": len(train_winner_agent.trade_log),
+                "trade_to_candle_ratio": round((len(train_winner_agent.trade_log) / len(self.trainer.df_train)) * 12, 4)
+            }
+            
+            # Save generation data including both train and test trade logs
+            self.trainer.save_generation_data(
+                gen=self.generation,
+                metrics={"train": train_metrics, "test": test_metrics},
+                train_trade_log=winner_agent.trade_log,
+                test_trade_log=train_winner_agent.trade_log,
+            )
+            
+            self.trainer.logger.log(f"Generation {self.generation} data saved.", level="INFO")
             self.generation += 1
         else:
             print("No genomes were evaluated in this generation.")
 
+class CustomCheckpointer(neat.Checkpointer):
+    def save_checkpoint(self, config, population, species_set, generation):
+        # Remove lock or other threading dependencies if necessary here
+        self.clean_population(population)
+        # Then save as usual
+        super().save_checkpoint(config, population, species_set, generation)
+
+    def clean_population(self, population):
+        for genome in population.values():
+            if hasattr(genome, 'lock'):
+                del genome.lock  # Or any similar lock object
 
 
 if __name__ == "__main__":
