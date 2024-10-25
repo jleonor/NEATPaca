@@ -1,12 +1,100 @@
 # NEATPaca: An Evolutionary Approach to Learning How to Trade
 
 ## Structure
-- config.config: the config file that contains all the training and trading parameters (i.e. currencies, dates, timeframes, indicators, keys, etc.)
-- training_main.py: launches the training script (multithreaded for each currency)
-- trading_main.py: launches the trading script (only works after the models are trained)
-- neat_config.txt: the config file for the NEAT algorithm
-- DashViewer.py: launches a dashboard on the training results
-- NEATPaca folder: contains .py files for classes: AlpacaTrader.py (for live trading), ConfigReader.py (for interpreting the config file), DataHandler.py (for downloading training data and for updating trading data), Logger.py (for logging, used in the other objects), NEATAgent.py (the NEAT agent used for training in the Trainer object), Trainer.py (for passing the data to NEATAgent and managing the training session), Viewer.py (deprecated, previous class used for visualising training results)
+
+### Configuration
+- **`config.config`**:  
+  Contains all the training and trading parameters, including:
+  - Currencies
+  - Dates
+  - Timeframes
+  - Indicators
+  - API keys
+
+- **`neat_config.txt`**:  
+  Configuration file specifically for the NEAT algorithm.
+
+### Scripts
+- **`training_main.py`**:  
+  Launches the training script, with multithreading support for each currency.
+
+- **`trading_main.py`**:  
+  Launches the trading script. (Note: Only functions after models have been trained.)
+
+- **`DashViewer.py`**:  
+  Starts a dashboard to view training results.
+
+### NEATPaca Folder
+Contains Python files for core classes used in training and live trading:
+
+- **`AlpacaTrader.py`**:  
+  Handles live trading through Alpaca API.
+
+- **`ConfigReader.py`**:  
+  Parses and interprets `config.config`.
+
+- **`DataHandler.py`**:  
+  Downloads training data and updates trading data.
+
+- **`Logger.py`**:  
+  Manages logging for other modules.
+
+- **`NEATAgent.py`**:  
+  The NEAT agent used in training within the `Trainer` class.
+
+- **`Trainer.py`**:  
+  Passes data to `NEATAgent` and manages the training sessions.
+
+- **`Viewer.py`** (deprecated):  
+  Previously used for visualizing training results, now replaced by `DashViewer.py`.
+## Structure
+
+### Configuration
+- **`config.config`**:  
+  Contains all the training and trading parameters, including:
+  - Currencies
+  - Dates
+  - Timeframes
+  - Indicators
+  - API keys
+
+- **`neat_config.txt`**:  
+  Configuration file specifically for the NEAT algorithm.
+
+### Scripts
+- **`training_main.py`**:  
+  Launches the training script, with multithreading support for each currency.
+
+- **`trading_main.py`**:  
+  Launches the trading script. (Note: Only functions after models have been trained.)
+
+- **`DashViewer.py`**:  
+  Starts a dashboard to view training results.
+
+### NEATPaca Folder
+Contains Python files for core classes used in training and live trading:
+
+- **`AlpacaTrader.py`**:  
+  Handles live trading through Alpaca API.
+
+- **`ConfigReader.py`**:  
+  Parses and interprets `config.config`.
+
+- **`DataHandler.py`**:  
+  Downloads training data and updates trading data.
+
+- **`Logger.py`**:  
+  Manages logging for other modules.
+
+- **`NEATAgent.py`**:  
+  The NEAT agent used in training within the `Trainer` class.
+
+- **`Trainer.py`**:  
+  Passes data to `NEATAgent` and manages the training sessions.
+
+- **`Viewer.py`** (deprecated):  
+  Previously used for visualizing training results, now replaced by `DashViewer.py`.
+
 
 ## Introduction
 In this project, I use the NEAT (Neuro Evolution of Augmenting Topologies) algorithm within a Python-based trading platform to develop an approach to algorithmic trading. The core of the project revolves around an autonomous trading agent capable of buying and selling positions across various currencies, with each action recorded and analyzed to enhance future decision-making. Leveraging the comprehensive data provided by the Alpaca API, the agent utilizes an array of technical indicators across multiple timeframes and window sizes, each normalized to facilitate AI interpretation. This enables the agent to not only execute trades based on sophisticated pattern recognition but also evolve its strategies over time through the NEAT algorithm's evolutionary processes.
